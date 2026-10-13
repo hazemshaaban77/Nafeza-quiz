@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>منصة تقييم نافذة</title>
+<link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="common.js"></script>
+</head>
+<body><main>
+<header><img src="mts.png" alt="MTS"><img src="training.png" alt="Training Team"></header>
+<div id="app"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id),app=$("app"),R=roomId();
+let U,C,P={},QS=[],RES={},META={},KD={},KEYD={},MINE={},lastKey="",TM,started=0;
+const msg=t=>{app.innerHTML=`<div class="card" style="text-align:center"><p>${t}</p></div>`};
+
+if(!R)msg("الرابط غير مكتمل. امسح الـ QR مرة تانية.");
+else auth.onAuthStateChanged(u=>{
+  if(u){U=u.uid;if(!started){started=1;listen()}}
+  else auth.signInAnonymously().catch(()=>msg("تعذّر الاتصال. تأكد من الإنترنت وحاول تاني."));
+});
+
+function listen(){
+  db.ref("rooms/"+R).on("value",s=>{
+    const d=s.val();
+    if(!d||!d.ctl){clearInterval(TM);lastKey="";msg("الغرفة غير موجودة أو انتهت.");return}
+    C=d.ctl;P=d.players||{};QS=d.qs||[];RES=d.res||{};META=d.meta||{};KD=d.kicked||{};KEYD=d.key||{};render();
+  },()=>msg("مفيش صلاحية للدخول للغرفة."));
+}
+
+function render(){
+  if(KD[U]){clearInterval(TM);lastKey="kick";msg("تم استبعادك من هذه الجلسة.");return}
+  const me=P[U];
+  if(!me||!me.name){
+    const jk="join"+(C.lock?"L":"");
+    if(lastKey!==jk){
+      lastKey=jk;clearInterval(TM);
+      if(C.lock){msg("المسابقة بدأت والانضمام مقفول. كلّم المدرب لو محتاج تدخل.");return}
+      app.innerHTML=`<h1>${esc(META.title||"منصة تقييم نافذة")}</h1><p style="text-align:center">اكتب اسمك ورقمك الوظيفي للانضمام.</p><div class="card"><input id="nm" maxlength="30" placeholder="اسمك الثلاثي" autocomplete="name"><input id="id" maxlength="20" dir="ltr" placeholder="الرقم الوظيفي" autocomplete="off"><button class="btn" id="jn">انضمام 🚀</button><p class="err" id="e"></p></div>`;
+      $("jn").onclick=()=>{
+        const n=$("nm").value.trim(),er=$("e");
+        const id=$("id").value.trim().replace(/[٠-٩]/g,d=>"٠١٢٣٤٥٦٧٨٩".indexOf(d)).toUpperCase().replace(/[^A-Z0-9_-]/g,"");
+        if(!n||!id){er.textContent="اكتب اسمك ورقمك الوظيفي.";return}
+        snd("tick");
+        db.ref("eids/"+R+"/"+id).set(U).then(
+          ()=>db.ref("rooms/"+R+"/players/"+U+"/name").set(n).catch(()=>{er.textContent="الانضمام مقفول أو تم استبعادك."}),
+          ()=>{er.textContent="الرقم الوظيفي ده مسجّل من جهاز تاني. كلّم المدرب."});
+      };
+    }
+    return;
+  }
+  const ph=C.phase,k=ph+C.i;
+  if(ph==="q"){if(lastKey!==k){lastKey=k;buildQ()}return}
+  clearInterval(TM);
+  const first=lastKey!==k;lastKey=k;
+  if(ph==="lobby"){
+    app.innerHTML=`<h1>أهلاً ${esc(me.name)} 👋</h1><div class="card" style="text-align:center"><p class="verdict ok">تم تسجيل دخولك ✅</p><p>في انتظار إشارة البدء من المدرب...</p><h3>المنضمون (${Object.keys(P).length})</h3>${Object.values(P).map(p=>`<span class="tag">${esc(p.name||"")}</span>`).join("")}</div>`;
+  }else if(ph==="rev"){
+    const i=C.i,q=QS[i],r=(RES[i]||{})[U],m=MINE[i];
+    app.innerHTML=`<p class="verdict ${r>0?"ok":"bad"}">${r>0?"إجابة صحيحة! +"+r+" نقطة 👏":r===0?"إجابة خاطئة ❌":"لم تُجب في الوقت المحدد"}</p>${q.o.map((t,j)=>`<button class="opt ${j===C.correct?"ok":j===m?"bad":""}" disabled><b>${j===C.correct?"✓":LET[j]}</b><span>${esc(t)}</span></button>`).join("")}${C.expl?`<div class="card"><h3>💡 الشرح</h3><p style="color:var(--ink)">${esc(C.expl)}</p></div>`:""}<div class="card"><h3>ترتيب المتدربين 🏆</h3>${board(P,RES[i],U,C.n*1000)}</div><p style="text-align:center">في انتظار السؤال التالي...</p>`;
+    if(first)snd(r>0?"ok":"bad");
+  }else if(ph==="end"){
+    const n=C.n,a=Object.entries(P).sort((x,y)=>(y[1].score||0)-(x[1].score||0)),pos=a.findIndex(x=>x[0]===U)+1;
+    const rt=rights(RES,U,n),pct=Math.round(rt/n*100),pc=+META.pass||0,ka=KEYD.a||[],ke=KEYD.e||{};
+    const verdict=pc?(pct>=pc?`<p class="verdict ok">اجتزت المسابقة ✅</p>`:`<p class="verdict bad">لم تجتز (حد النجاح ${pc}%)</p>`):"";
+    const wrong=[];for(let i=0;i<n;i++){if(!(((RES[i]||{})[U])>0))wrong.push(i)}
+    const review=wrong.length?`<div class="card"><h3>راجع أخطاءك 📝</h3>${wrong.map(i=>{const q=QS[i]||{q:"",o:[]},r=(RES[i]||{})[U];return `<div class="lr"><b>${i+1}. ${esc(q.q)}</b><p>${r===-1?"لم تُجب<br>":MINE[i]!==undefined?"إجابتك: "+esc(q.o[MINE[i]]||"")+"<br>":""}الإجابة الصحيحة: <b style="color:var(--g)">${esc(q.o[ka[i]]||"")}</b>${ke[i]?"<br>💡 "+esc(ke[i]):""}</p></div>`}).join("")}</div>`:`<p class="verdict ok">كل إجاباتك صحيحة! 🎉</p>`;
+    app.innerHTML=`<h1>انتهت المسابقة 🎉</h1>${verdict}<p class="verdict" style="color:var(--ink)">مركزك ${pos} من ${a.length} — ${me.score||0} نقطة</p><p style="text-align:center">إجابات صحيحة: ${rt} من ${n} (${pct}%)</p>${review}<div class="card"><h3>الترتيب النهائي</h3>${board(P,null,U,n*1000)}</div>`;
+    if(first&&pos&&pos<=3&&window.confetti)confetti({particleCount:150,spread:80,origin:{y:.6}});
+  }
+}
+
+function buildQ(){
+  const i=C.i,q=QS[i],lim=C.lim,t0=C.t0;let done=0,ls=0;
+  app.innerHTML=`<div class="top"><span>السؤال ${i+1} من ${C.n}</span></div><div class="top"><span>الوقت المتبقي</span><span class="time" id="tt"></span></div><div class="tbar"><i id="tb"></i></div><h2>${esc(q.q)}</h2>${q.o.map((t,k)=>`<button class="opt" data-k="${k}"><b>${LET[k]}</b><span>${esc(t)}</span></button>`).join("")}<p id="st" style="text-align:center"></p>`;
+  const bs=[...app.querySelectorAll(".opt")],lock=()=>bs.forEach(b=>{b.disabled=true});
+  bs.forEach(b=>{b.onclick=()=>{
+    if(done)return;done=1;const k=+b.dataset.k;MINE[i]=k;b.classList.add("pick");lock();
+    $("st").textContent="تم إرسال إجابتك ✅ في انتظار باقي المتدربين...";
+    db.ref("ans/"+R+"/"+i+"/"+U).set({k,ts:firebase.database.ServerValue.TIMESTAMP}).catch(()=>{$("st").textContent="تعذّر إرسال الإجابة"});
+  }});
+  clearInterval(TM);
+  TM=setInterval(()=>{
+    const left=Math.max(0,lim-(now()-t0)/1000),t=$("tt");if(!t)return;
+    t.textContent=Math.ceil(left);t.classList.toggle("low",left<=lim*.27);$("tb").style.width=left/lim*100+"%";
+    const s=Math.ceil(left);if(!done&&s<=5&&s>0&&s!==ls){ls=s;snd("tick")}
+    if(left<=0&&!done){done=1;lock();$("st").textContent="انتهى الوقت ⏰"}
+  },200);
+}
+</script>
+</body>
+</html>
